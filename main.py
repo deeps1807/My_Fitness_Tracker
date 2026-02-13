@@ -3,7 +3,6 @@ import os
 import sqlite3
 from datetime import date, datetime
 import json
-from typing import Optional, Dict, Any
 
 # Google Fit imports
 from googleapiclient.discovery import build
@@ -12,28 +11,28 @@ from google.oauth2.credentials import Credentials
 # -----------------------------
 # CONFIG
 # -----------------------------
-DB_PATH: str = os.path.join("/tmp", "calorie_tracker_ai.db")
+DB_PATH = os.path.join("/tmp", "calorie_tracker_ai.db")
 
-DAILY_GOAL: int = 2000
-WATER_GOAL: float = 2.5
-USER_GOAL: str = "maintain"
+DAILY_GOAL = 2000
+WATER_GOAL = 2.5
+USER_GOAL = "maintain"
 
-SCOPES: list[str] = [
+SCOPES = [
     "https://www.googleapis.com/auth/fitness.activity.read"
 ]
 
-mcp: FastMCP = FastMCP("CalorieTracker_Smart")
+mcp = FastMCP("CalorieTracker_Smart")
 
 # -----------------------------
-# DATABASE HELPER
+# DATABASE CONNECTION
 # -----------------------------
-def get_connection() -> sqlite3.Connection:
+def get_connection():
     return sqlite3.connect(DB_PATH)
 
 # -----------------------------
 # INIT DATABASE
 # -----------------------------
-def init_db() -> None:
+def init_db():
     with get_connection() as c:
 
         c.execute("""
@@ -76,13 +75,10 @@ init_db()
 # STORE MEAL
 # -----------------------------
 @mcp.tool()
-def store_meal(
-    description: str,
-    estimated_calories: float,
-    log_date: Optional[str] = None
-) -> Dict[str, Any]:
+def store_meal(description: str, estimated_calories: float, log_date: str = ""):
 
-    log_date = log_date or str(date.today())
+    if log_date == "":
+        log_date = str(date.today())
 
     with get_connection() as c:
 
@@ -97,23 +93,23 @@ def store_meal(
                 "INSERT INTO logs(log_date, total_calories) VALUES (?,0)",
                 (log_date,)
             )
-            log_id: int = cur.lastrowid
+            log_id = cur.lastrowid
         else:
-            log_id = int(log[0])
+            log_id = log[0]
 
-        c.execute("""
-            INSERT INTO food_entries (log_id, description, calories)
-            VALUES (?,?,?)
-        """, (log_id, description, estimated_calories))
+        c.execute(
+            "INSERT INTO food_entries (log_id, description, calories) VALUES (?,?,?)",
+            (log_id, description, estimated_calories)
+        )
 
-        c.execute("""
-            UPDATE logs
-            SET total_calories = total_calories + ?
-            WHERE id = ?
-        """, (estimated_calories, log_id))
+        c.execute(
+            "UPDATE logs SET total_calories = total_calories + ? WHERE id = ?",
+            (estimated_calories, log_id)
+        )
 
     return {
-        "stored": description,
+        "status": "success",
+        "stored_meal": description,
         "calories_added": estimated_calories,
         "date": log_date
     }
@@ -122,12 +118,10 @@ def store_meal(
 # LOG WATER
 # -----------------------------
 @mcp.tool()
-def log_water(
-    amount_liters: float,
-    log_date: Optional[str] = None
-) -> Dict[str, Any]:
+def log_water(amount_liters: float, log_date: str = ""):
 
-    log_date = log_date or str(date.today())
+    if log_date == "":
+        log_date = str(date.today())
 
     with get_connection() as c:
 
@@ -152,95 +146,105 @@ def log_water(
             (log_date,)
         ).fetchone()
 
-        total: float = float(total_row[0]) if total_row else 0.0
+        total = total_row[0] if total_row else 0.0
 
-    status: str = (
-        "⚠️ Low hydration." if total < WATER_GOAL else "✅ Hydration good."
-    )
+    if total < WATER_GOAL:
+        status = "Low hydration"
+    else:
+        status = "Hydration goal reached"
 
     return {
-        "total_water": total,
-        "status": status
+        "status": status,
+        "total_water_liters": total,
+        "goal_liters": WATER_GOAL
     }
 
 # -----------------------------
 # GOOGLE FIT STEP SYNC
 # -----------------------------
 @mcp.tool()
-def sync_google_fit_steps() -> Dict[str, Any]:
+def sync_google_fit_steps():
 
-    token_json: Optional[str] = os.getenv("GOOGLE_FIT_TOKEN")
+    token_json = os.getenv("GOOGLE_FIT_TOKEN")
 
     if not token_json:
-        return {"error": "GOOGLE_FIT_TOKEN not configured"}
+        return {
+            "status": "error",
+            "message": "GOOGLE_FIT_TOKEN not configured"
+        }
 
-    creds: Credentials = Credentials.from_authorized_user_info(
+    creds = Credentials.from_authorized_user_info(
         json.loads(token_json),
         SCOPES
     )
 
     service = build("fitness", "v1", credentials=creds)
 
-    now: datetime = datetime.utcnow()
-    start_of_day: datetime = datetime(now.year, now.month, now.day)
+    now = datetime.utcnow()
+    start_of_day = datetime(now.year, now.month, now.day)
 
-    body: Dict[str, Any] = {
+    body = {
         "aggregateBy": [{"dataTypeName": "com.google.step_count.delta"}],
         "bucketByTime": {"durationMillis": 86400000},
         "startTimeMillis": int(start_of_day.timestamp() * 1000),
         "endTimeMillis": int(now.timestamp() * 1000),
     }
 
-    response: Dict[str, Any] = service.users().dataset().aggregate(
+    response = service.users().dataset().aggregate(
         userId="me",
         body=body
     ).execute()
 
-    steps: int = 0
+    steps = 0
 
     for bucket in response.get("bucket", []):
         for dataset in bucket.get("dataset", []):
             for point in dataset.get("point", []):
                 steps += int(point["value"][0].get("intVal", 0))
 
-    today: str = str(date.today())
+    today = str(date.today())
 
     with get_connection() as c:
-        c.execute("""
-            INSERT OR REPLACE INTO activity_logs (log_date, steps)
-            VALUES (?,?)
-        """, (today, steps))
+        c.execute(
+            "INSERT OR REPLACE INTO activity_logs (log_date, steps) VALUES (?,?)",
+            (today, steps)
+        )
 
     return {
+        "status": "success",
         "date": today,
         "steps_today": steps
     }
 
 # -----------------------------
-# EXERCISE SUGGESTION ENGINE
+# EXERCISE SUGGESTION
 # -----------------------------
 @mcp.tool()
-def suggest_exercise_plan() -> Dict[str, Any]:
+def suggest_exercise_plan():
 
-    today: str = str(date.today())
+    today = str(date.today())
 
     with get_connection() as c:
-        data = c.execute("""
-            SELECT steps FROM activity_logs WHERE log_date=?
-        """, (today,)).fetchone()
+        data = c.execute(
+            "SELECT steps FROM activity_logs WHERE log_date=?",
+            (today,)
+        ).fetchone()
 
     if data is None:
-        return {"message": "No step data synced yet."}
+        return {
+            "status": "no_data",
+            "message": "No step data synced yet."
+        }
 
-    steps: int = int(data[0])
+    steps = data[0]
 
     if steps < 3000:
-        level: str = "low"
-        intensity: str = "beginner"
-        duration: str = "20-30 minutes"
-        focus: str = "light cardio and mobility"
+        level = "low"
+        intensity = "beginner"
+        duration = "20-30 minutes"
+        focus = "light cardio and mobility"
 
-    elif 3000 <= steps < 8000:
+    elif steps < 8000:
         level = "moderate"
         intensity = "intermediate"
         duration = "30 minutes"
@@ -253,6 +257,7 @@ def suggest_exercise_plan() -> Dict[str, Any]:
         focus = "HIIT or strength training"
 
     return {
+        "status": "success",
         "steps_today": steps,
         "activity_level": level,
         "recommended_intensity": intensity,
@@ -260,6 +265,8 @@ def suggest_exercise_plan() -> Dict[str, Any]:
         "workout_focus": focus
     }
 
+# -----------------------------
+# RUN SERVER
 # -----------------------------
 if __name__ == "__main__":
     mcp.run(transport="http", host="0.0.0.0", port=8000)

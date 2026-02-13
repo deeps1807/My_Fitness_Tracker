@@ -11,10 +11,8 @@ from googleapiclient.discovery import build
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
 
-DB_PATH = os.path.join(
-    os.getenv("TMPDIR", os.path.dirname(__file__)),
-    "calorie_tracker_ai.db"
-)
+DB_PATH = os.path.join("/tmp", "calorie_tracker_ai.db")
+
 TOKEN_PATH = os.path.join(os.path.dirname(__file__), "token.json")
 CREDENTIALS_PATH = os.path.join(os.path.dirname(__file__), "credentials.json")
 

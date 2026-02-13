@@ -2,6 +2,8 @@ from fastmcp import FastMCP
 import os
 import sqlite3
 from datetime import date, datetime
+import json
+
 
 # Google Fit imports
 from google_auth_oauthlib.flow import InstalledAppFlow
@@ -9,7 +11,10 @@ from googleapiclient.discovery import build
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
 
-DB_PATH = os.path.join("/tmp", "calorie_tracker_ai.db")
+DB_PATH = os.path.join(
+    os.getenv("TMPDIR", os.path.dirname(__file__)),
+    "calorie_tracker_ai.db"
+)
 TOKEN_PATH = os.path.join(os.path.dirname(__file__), "token.json")
 CREDENTIALS_PATH = os.path.join(os.path.dirname(__file__), "credentials.json")
 
@@ -157,29 +162,19 @@ def log_water(amount_liters: float, log_date: str = None):
 @mcp.tool()
 def sync_google_fit_steps():
 
-    creds = None
+    token_json = os.getenv("GOOGLE_FIT_TOKEN")
 
-    # Load saved token
-    if os.path.exists(TOKEN_PATH):
-        creds = Credentials.from_authorized_user_file(TOKEN_PATH, SCOPES)
+    if not token_json:
+        return {"error": "GOOGLE_FIT_TOKEN not configured in environment"}
 
-    # Refresh or re-authenticate
-    if not creds or not creds.valid:
-        if creds and creds.expired and creds.refresh_token:
-            creds.refresh(Request())
-        else:
-            flow = InstalledAppFlow.from_client_secrets_file(
-                CREDENTIALS_PATH,
-                SCOPES
-            )
-            creds = flow.run_local_server(port=0)
-
-        with open(TOKEN_PATH, "w") as token:
-            token.write(creds.to_json())
+    creds = Credentials.from_authorized_user_info(
+        json.loads(token_json),
+        SCOPES
+    )
 
     service = build('fitness', 'v1', credentials=creds)
 
-    now = datetime.now()
+    now = datetime.utcnow()
     start_of_day = datetime(now.year, now.month, now.day)
 
     body = {
@@ -216,6 +211,7 @@ def sync_google_fit_steps():
         "date": today,
         "steps_today": steps
     }
+
 
 # -----------------------------
 # EXERCISE SUGGESTION ENGINE

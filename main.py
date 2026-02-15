@@ -3,19 +3,16 @@ import os
 import sqlite3
 from datetime import date, datetime
 import json
-
-# Google Fit imports
 from googleapiclient.discovery import build
 from google.oauth2.credentials import Credentials
 
 # -----------------------------
 # CONFIG
 # -----------------------------
-DB_PATH = os.path.join("/tmp", "calorie_tracker_ai.db")
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+DB_PATH = os.path.join(BASE_DIR, "calorie_tracker_ai.db")
 
-DAILY_GOAL = 2000
 WATER_GOAL = 2.5
-USER_GOAL = "maintain"
 
 SCOPES = [
     "https://www.googleapis.com/auth/fitness.activity.read"
@@ -24,14 +21,11 @@ SCOPES = [
 mcp = FastMCP("CalorieTracker_Smart")
 
 # -----------------------------
-# DATABASE CONNECTION
+# DATABASE
 # -----------------------------
 def get_connection():
     return sqlite3.connect(DB_PATH)
 
-# -----------------------------
-# INIT DATABASE
-# -----------------------------
 def init_db():
     with get_connection() as c:
 
@@ -48,8 +42,7 @@ def init_db():
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             log_id INTEGER,
             description TEXT,
-            calories REAL,
-            FOREIGN KEY(log_id) REFERENCES logs(id)
+            calories REAL
         )
         """)
 
@@ -75,10 +68,9 @@ init_db()
 # STORE MEAL
 # -----------------------------
 @mcp.tool()
-def store_meal(description: str, estimated_calories: float, log_date: str = ""):
+def store_meal(description, estimated_calories):
 
-    if log_date == "":
-        log_date = str(date.today())
+    log_date = str(date.today())
 
     with get_connection() as c:
 
@@ -109,7 +101,7 @@ def store_meal(description: str, estimated_calories: float, log_date: str = ""):
 
     return {
         "status": "success",
-        "stored_meal": description,
+        "meal": description,
         "calories_added": estimated_calories,
         "date": log_date
     }
@@ -118,10 +110,9 @@ def store_meal(description: str, estimated_calories: float, log_date: str = ""):
 # LOG WATER
 # -----------------------------
 @mcp.tool()
-def log_water(amount_liters: float, log_date: str = ""):
+def log_water(amount_liters):
 
-    if log_date == "":
-        log_date = str(date.today())
+    log_date = str(date.today())
 
     with get_connection() as c:
 
@@ -149,18 +140,18 @@ def log_water(amount_liters: float, log_date: str = ""):
         total = total_row[0] if total_row else 0.0
 
     if total < WATER_GOAL:
-        status = "Low hydration"
+        hydration_status = "low"
     else:
-        status = "Hydration goal reached"
+        hydration_status = "good"
 
     return {
-        "status": status,
-        "total_water_liters": total,
-        "goal_liters": WATER_GOAL
+        "status": hydration_status,
+        "total_water": total,
+        "goal": WATER_GOAL
     }
 
 # -----------------------------
-# GOOGLE FIT STEP SYNC
+# SYNC STEPS
 # -----------------------------
 @mcp.tool()
 def sync_google_fit_steps():
@@ -212,61 +203,11 @@ def sync_google_fit_steps():
 
     return {
         "status": "success",
-        "date": today,
         "steps_today": steps
     }
 
 # -----------------------------
-# EXERCISE SUGGESTION
-# -----------------------------
-@mcp.tool()
-def suggest_exercise_plan():
-
-    today = str(date.today())
-
-    with get_connection() as c:
-        data = c.execute(
-            "SELECT steps FROM activity_logs WHERE log_date=?",
-            (today,)
-        ).fetchone()
-
-    if data is None:
-        return {
-            "status": "no_data",
-            "message": "No step data synced yet."
-        }
-
-    steps = data[0]
-
-    if steps < 3000:
-        level = "low"
-        intensity = "beginner"
-        duration = "20-30 minutes"
-        focus = "light cardio and mobility"
-
-    elif steps < 8000:
-        level = "moderate"
-        intensity = "intermediate"
-        duration = "30 minutes"
-        focus = "fat burning workout"
-
-    else:
-        level = "high"
-        intensity = "advanced"
-        duration = "20 minutes"
-        focus = "HIIT or strength training"
-
-    return {
-        "status": "success",
-        "steps_today": steps,
-        "activity_level": level,
-        "recommended_intensity": intensity,
-        "recommended_duration": duration,
-        "workout_focus": focus
-    }
-
-# -----------------------------
-# RUN SERVER
+# RUN
 # -----------------------------
 if __name__ == "__main__":
     mcp.run(transport="http", host="0.0.0.0", port=8000)
